@@ -4,13 +4,6 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
-
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#0f1923">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Material Planner">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>Material &amp; Lamination Planner</title>
 <style>
 
@@ -1457,6 +1450,8 @@ input.field.small.disabled{
   .printHide{ display:none !important; }
 }
 
+
+.print-btn{touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
 </style>
 <style>
 /* === sub + help spacing & parity === */
@@ -9917,6 +9912,7 @@ input[name="qty"],
 <div class="topbar">
 <button class="btn primary" id="addItemBtn" onclick="addItem()">+ Add Position</button>
 <button class="btn" id="importOcrBtn" type="button" style="margin-left:6px;" onclick="(function(){var m=document.getElementById('ocrImportModal');if(!m)return;m.classList.add('open');m.setAttribute('aria-hidden','false');var eb=document.getElementById('ocrImportError');if(eb){eb.style.display='none';eb.textContent='';}var ta=document.getElementById('ocrImportText');if(ta){setTimeout(function(){try{ta.focus();}catch(e){}},50);}})();">Import list</button>
+      <button class="btn print-btn" id="printBtn" type="button">🖨️ Print</button>
 
 <div class="posViewButtons" id="posViewButtons" aria-label="Programs view">
   <button class="posViewBtn active" id="posViewFull" type="button">Full</button>
@@ -15044,12 +15040,27 @@ document.addEventListener('DOMContentLoaded', applyProgramView);
 
 
 <script>
-  // PWA: register Service Worker
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(()=>{});
-    });
+/* Print button reliability (iOS): ensure touch triggers print */
+(function(){
+  var btn = document.getElementById('printBtn');
+  if(!btn) return;
+
+  function doPrint(ev){
+    if(ev){
+      try{ ev.preventDefault(); }catch(e){}
+      try{ ev.stopPropagation(); }catch(e){}
+    }
+    // Some iOS/WebView environments may not fire beforeprint automatically.
+    try{ window.dispatchEvent(new Event('beforeprint')); }catch(e){}
+    setTimeout(function(){
+      try{ window.print(); }catch(e){}
+    }, 60);
   }
+
+  btn.addEventListener('click', doPrint);
+  btn.addEventListener('pointerup', doPrint);
+  btn.addEventListener('touchend', doPrint, {passive:false});
+})();
 </script>
 
 </body>
