@@ -9860,6 +9860,10 @@ input[name="qty"],
 }
 </style>
 
+
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
 </head>
 <body class="mode-compact">
 <div class="wrap">
@@ -9912,7 +9916,7 @@ input[name="qty"],
 <div class="topbar">
 <button class="btn primary" id="addItemBtn" onclick="addItem()">+ Add Position</button>
 <button class="btn" id="importOcrBtn" type="button" style="margin-left:6px;" onclick="(function(){var m=document.getElementById('ocrImportModal');if(!m)return;m.classList.add('open');m.setAttribute('aria-hidden','false');var eb=document.getElementById('ocrImportError');if(eb){eb.style.display='none';eb.textContent='';}var ta=document.getElementById('ocrImportText');if(ta){setTimeout(function(){try{ta.focus();}catch(e){}},50);}})();">Import list</button>
-      <button class="btn print-btn" id="printBtn" type="button">🖨️ Print</button>
+      <button class="btn print-btn" id="pdfBtn" type="button">📄 PDF</button>
 
 <div class="posViewButtons" id="posViewButtons" aria-label="Programs view">
   <button class="posViewBtn active" id="posViewFull" type="button">Full</button>
@@ -15060,6 +15064,232 @@ document.addEventListener('DOMContentLoaded', applyProgramView);
   btn.addEventListener('click', doPrint);
   btn.addEventListener('pointerup', doPrint);
   btn.addEventListener('touchend', doPrint, {passive:false});
+})();
+</script>
+
+
+<script>
+/* === Export PDF (structured) — iOS-friendly Share Sheet === */
+(function(){
+  const btn = document.getElementById('pdfBtn');
+  if(!btn) return;
+
+  function cloneClean(node){
+    const c = node.cloneNode(true);
+
+    // remove interactive controls
+    c.querySelectorAll('button, input[type="checkbox"], .noprint, .topbar, .filter, .filterRow, .filterTitle, .filter-actions')
+      .forEach(el => el.remove());
+
+    // If some buttons remain inside headings (e.g. Cut view toggle), remove them:
+    c.querySelectorAll('button').forEach(el => el.remove());
+
+    // Make inputs look like text (for Order/Sub/Qty etc)
+    c.querySelectorAll('input, select, textarea').forEach(el=>{
+      const val = (el.tagName === 'SELECT')
+        ? (el.options && el.selectedIndex>=0 ? el.options[el.selectedIndex].text : '')
+        : (el.value || el.getAttribute('value') || '');
+      const span = document.createElement('div');
+      span.textContent = val;
+      span.style.whiteSpace = 'pre-wrap';
+      span.style.padding = '2px 0';
+      span.style.fontSize = '14px';
+      span.style.color = '#111';
+      span.style.borderBottom = '1px dotted rgba(0,0,0,.25)';
+      el.replaceWith(span);
+    });
+
+    return c;
+  }
+
+  async function canvasToPdfPages(doc, canvas, marginMm){
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+
+    // Convert canvas px -> mm based on target width
+    const imgW = pageW - marginMm*2;
+    const pxPerMm = canvas.width / imgW; // canvas px per mm when scaled to imgW
+    const pagePxH = Math.floor((pageH - marginMm*2) * pxPerMm);
+
+    let yPx = 0;
+    let first = true;
+
+    while(yPx < canvas.height){
+      const sliceH = Math.min(pagePxH, canvas.height - yPx);
+
+      const slice = document.createElement('canvas');
+      slice.width = canvas.width;
+      slice.height = sliceH;
+      const sctx = slice.getContext('2d');
+      sctx.drawImage(canvas, 0, yPx, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+
+      const imgData = slice.toDataURL('image/jpeg', 0.92);
+
+      if(!first) doc.addPage();
+      first = false;
+
+      const imgH = sliceH / pxPerMm;
+      doc.addImage(imgData, 'JPEG', marginMm, marginMm, imgW, imgH);
+
+      yPx += sliceH;
+    }
+  }
+
+  async function renderSection(el){
+    // render with white background, black text
+    return await html2canvas(el, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      useCORS: true
+    });
+  }
+
+  async function exportPdf(){
+    // Ensure calculated lists exist
+    try{
+      if(typeof buildCutList === 'function') buildCutList();
+    }catch(e){}
+
+    // Expand all positions for export (reuse existing print helper if present)
+    try{ if(typeof __expandAllForPrint === 'function') __expandAllForPrint(); }catch(e){}
+
+    // Build offscreen container
+    const host = document.createElement('div');
+    host.style.position = 'fixed';
+    host.style.left = '-10000px';
+    host.style.top = '0';
+    host.style.width = '900px'; // stable render width
+    host.style.padding = '18px';
+    host.style.background = '#fff';
+    host.style.color = '#111';
+    host.style.fontFamily = 'Arial, -apple-system, system-ui, Segoe UI, Roboto, sans-serif';
+    host.style.fontSize = '14px';
+    host.style.lineHeight = '1.25';
+    host.style.boxSizing = 'border-box';
+
+    function sectionTitle(t){
+      const h = document.createElement('div');
+      h.textContent = t;
+      h.style.fontSize = '16px';
+      h.style.fontWeight = '700';
+      h.style.margin = '10px 0 8px';
+      return h;
+    }
+
+    // Header: app header + meta card
+    const appHeader = document.querySelector('.appHeader');
+    const metaCard = (document.querySelector('.appHeader') && document.querySelector('.appHeader').nextElementSibling)
+      ? document.querySelector('.appHeader').nextElementSibling
+      : document.querySelector('.card');
+
+    const headerWrap = document.createElement('div');
+    if(appHeader) headerWrap.appendChild(cloneClean(appHeader));
+    if(metaCard) headerWrap.appendChild(cloneClean(metaCard));
+    host.appendChild(headerWrap);
+
+    // Positions
+    host.appendChild(sectionTitle('Positions'));
+    const items = document.getElementById('items');
+    if(items) host.appendChild(cloneClean(items));
+
+    // Page break marker
+    const pb1 = document.createElement('div');
+    pb1.style.height = '1px';
+    pb1.style.margin = '0';
+    host.appendChild(pb1);
+
+    // Cutting plan
+    host.appendChild(sectionTitle('Cutting plan'));
+    const cut = document.getElementById('cutList');
+    if(cut) host.appendChild(cloneClean(cut));
+
+    // Material to pick
+    host.appendChild(sectionTitle('Material to pick'));
+    const mp = document.getElementById('matPick');
+    if(mp) host.appendChild(cloneClean(mp));
+
+    document.body.appendChild(host);
+
+    // Create PDF
+    const { jsPDF } = window.jspdf || {};
+    if(!jsPDF){
+      alert('PDF library not loaded (jsPDF). Open once with internet so it can load.');
+      host.remove();
+      try{ if(typeof __restoreAfterPrint === 'function') __restoreAfterPrint(); }catch(e){}
+      return;
+    }
+
+    const doc = new jsPDF({orientation:'p', unit:'mm', format:'a4'});
+    const margin = 10;
+
+    // We render in 3 logical blocks with page breaks:
+    // Block 1: Header + Positions
+    // Block 2: Cutting plan
+    // Block 3: Material to pick
+    // We'll render each block separately to control breaks.
+
+    const block1 = document.createElement('div');
+    block1.appendChild(headerWrap.cloneNode(true));
+    const posTitle = sectionTitle('Positions');
+    block1.appendChild(posTitle);
+    if(items) block1.appendChild(cloneClean(items));
+    host.appendChild(block1);
+
+    const block2 = document.createElement('div');
+    block2.appendChild(sectionTitle('Cutting plan'));
+    if(cut) block2.appendChild(cloneClean(cut));
+    host.appendChild(block2);
+
+    const block3 = document.createElement('div');
+    block3.appendChild(sectionTitle('Material to pick'));
+    if(mp) block3.appendChild(cloneClean(mp));
+    host.appendChild(block3);
+
+    // Hide the big host content and render blocks only (less risk of huge canvas)
+    Array.from(host.children).forEach(ch => ch.style.display = 'none');
+    block1.style.display = '';
+    block2.style.display = '';
+    block3.style.display = '';
+
+    const c1 = await renderSection(block1);
+    await canvasToPdfPages(doc, c1, margin);
+
+    doc.addPage();
+    const c2 = await renderSection(block2);
+    await canvasToPdfPages(doc, c2, margin);
+
+    doc.addPage();
+    const c3 = await renderSection(block3);
+    await canvasToPdfPages(doc, c3, margin);
+
+    // Clean up
+    host.remove();
+    try{ if(typeof __restoreAfterPrint === 'function') __restoreAfterPrint(); }catch(e){}
+
+    const pdfBlob = doc.output('blob');
+    const fileName = 'Material_Lamination_Planner.pdf';
+
+    // iOS Share Sheet (preferred)
+    try{
+      const f = new File([pdfBlob], fileName, {type:'application/pdf'});
+      if(navigator.canShare && navigator.canShare({ files: [f] }) && navigator.share){
+        await navigator.share({ files: [f], title: fileName });
+        return;
+      }
+    }catch(e){}
+
+    // Fallback: download
+    const url = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1000);
+  }
+
+  btn.addEventListener('click', (e)=>{ e.preventDefault(); exportPdf(); });
+  btn.addEventListener('touchend', (e)=>{ try{ e.preventDefault(); }catch(_){} exportPdf(); }, {passive:false});
 })();
 </script>
 
